@@ -1,0 +1,79 @@
+DECLARE 
+  @Mode VARCHAR(20),
+  @ErrorMessage VARCHAR(255),
+  @ErrorNumber INT = 0
+
+SET NOCOUNT ON
+SET @Mode='Setup'; -- Options are 'Setup' or 'Remove'
+
+IF @Mode='Setup' 
+BEGIN
+ IF EXISTS (SELECT 1 FROM sys.server_event_sessions WHERE name = N'What_queries_are_failing')
+ BEGIN
+  DROP EVENT SESSION [What_queries_are_failing] ON SERVER;
+  PRINT 'Extended event already exists, recreating. ';
+ END
+ ELSE BEGIN
+  PRINT 'Creating Extended Event. ';
+ END
+ 
+ BEGIN TRY
+  CREATE EVENT SESSION [What_queries_are_failing] ON SERVER 
+  ADD EVENT sqlserver.error_reported(
+   ACTION(sqlserver.database_id,sqlserver.sql_text,sqlserver.tsql_stack,sqlserver.username)
+   WHERE ([severity]>(10))) 
+  ADD TARGET package0.event_file(SET filename=N'what_queries_are_failing.xel',max_file_size=(5),max_rollover_files=(5),metadatafile=N'what_queries_are_failing.xem')
+  WITH (MAX_MEMORY=2048 KB,EVENT_RETENTION_MODE=ALLOW_MULTIPLE_EVENT_LOSS,MAX_DISPATCH_LATENCY=5 SECONDS,MAX_EVENT_SIZE=0 KB,MEMORY_PARTITION_MODE=NONE,TRACK_CAUSALITY=OFF,STARTUP_STATE=ON);
+  IF EXISTS (SELECT 1 FROM sys.server_event_sessions WHERE name = N'What_queries_are_failing') BEGIN
+   PRINT 'Starting Extended Event. ';
+   ALTER EVENT SESSION [What_queries_are_failing] ON SERVER STATE = START
+  END
+ END TRY
+ BEGIN CATCH
+  SET @ErrorNumber=ERROR_NUMBER()
+  SET @ErrorMessage=ERROR_MESSAGE()
+ END CATCH;
+END
+
+IF @ErrorNumber = 25641 AND @Mode='Setup' BEGIN
+ BEGIN TRY
+  SET @ErrorNumber=0
+  PRINT 'Permission problem found, trying ''C:\Temp'' folder for Extended Event files. ';
+  CREATE EVENT SESSION [What_queries_are_failing] ON SERVER 
+  ADD EVENT sqlserver.error_reported(
+   ACTION(sqlserver.database_id,sqlserver.sql_text,sqlserver.tsql_stack,sqlserver.username)
+   WHERE ([severity]>(10))) 
+  ADD TARGET package0.event_file(SET filename=N'C:\TEMP\what_queries_are_failing.xel',max_file_size=(5),max_rollover_files=(5),metadatafile=N'C:\TEMP\what_queries_are_failing.xem')
+  WITH (MAX_MEMORY=2048 KB,EVENT_RETENTION_MODE=ALLOW_MULTIPLE_EVENT_LOSS,MAX_DISPATCH_LATENCY=5 SECONDS,MAX_EVENT_SIZE=0 KB,MEMORY_PARTITION_MODE=NONE,TRACK_CAUSALITY=OFF,STARTUP_STATE=ON);
+
+  IF EXISTS (SELECT 1 FROM sys.server_event_sessions WHERE name = N'What_queries_are_failing') BEGIN
+   ALTER EVENT SESSION [What_queries_are_failing] ON SERVER STATE = START
+   PRINT 'Work around was a success, starting Extended Event. ';
+  END
+ END TRY
+ BEGIN CATCH
+  SET @ErrorMessage=ERROR_MESSAGE();
+  SET @ErrorNumber=ERROR_NUMBER()
+  RAISERROR(@ErrorMessage, 16, 1);
+ END CATCH
+END 
+ELSE IF @ErrorNumber > 0 AND @Mode='Setup' BEGIN
+ RAISERROR(@ErrorMessage, 16, 1);
+ RETURN;
+END;
+
+IF @Mode='Remove' OR @ErrorNumber <> 0
+BEGIN
+ IF EXISTS (SELECT 1 FROM sys.server_event_sessions WHERE name = N'What_queries_are_failing')
+ BEGIN
+  DROP EVENT SESSION [What_queries_are_failing] ON SERVER
+  IF @ErrorNumber = 0
+   PRINT 'Dropping Extended Event. ';
+  ELSE
+   PRINT 'Cleaning up a failed extended event creation';
+ END
+ ELSE
+  PRINT + 'Extended event doesn''t exist on this SQL instance. ';
+END
+
+PRINT 'Process Complete. ';
