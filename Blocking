@@ -1,0 +1,88 @@
+SELECT 
+  P.spid, 
+  P.blocked, 
+  CASE 
+  WHEN LEN(T.TEXT) > 2000 THEN REPLACE (REPLACE (Left(T.TEXT, 2000), CHAR(10), ' '), CHAR (13), ' ' ) + '...... << Text Truncated >>'
+  ELSE REPLACE (REPLACE (T.TEXT, CHAR(10), ' '), CHAR (13), ' ' )
+  END AS BATCH,
+  P.status,
+  P.cmd as command,
+  r.wait_type,
+  r.wait_time /1000 as WaitSeconds,
+  P.login_time,
+  P.last_batch,
+  P.open_tran,
+  LTRIM(RTRIM(P.hostname)) as [hostname],
+  P.loginame,
+  LTRIM(RTRIM(P.[program_name])) as [program_name]
+ INTO #T
+ FROM sys.sysprocesses P 
+ left JOIN sys.dm_exec_requests R on P.spid=r.session_id
+ CROSS APPLY sys.dm_exec_sql_text(P.SQL_HANDLE) T;
+
+ WITH BLOCKERS (BlockStatus, SPID, BLOCKED, BATCH, status, command, wait_type, WaitSeconds, login_time, last_batch, open_tran, hostname, loginame, program_name)
+ AS
+ (
+  -- Find all the blocking processes that meet the parameters input values and place them in the CTE named BLOCKERS
+  SELECT 
+   cast('Blocking' as nvarchar(8)) as BlockStatus,
+   SPID,
+   BLOCKED,
+   BATCH,
+   status,
+   command,
+   wait_type,
+   WaitSeconds,
+   login_time,
+   last_batch,
+   open_tran,
+   hostname,
+   loginame,
+   program_name
+  FROM #T R
+  WHERE (BLOCKED = 0 OR BLOCKED = SPID)
+  AND EXISTS (
+   SELECT * FROM #T R2 
+   WHERE R2.BLOCKED = R.SPID AND R2.BLOCKED <> R2.SPID )
+  UNION ALL
+ 
+  -- Find all the blocked processes and add them to the CTE
+  SELECT 
+   cast('Blocked' as nvarchar(8)) as BlockStatus,
+   R.SPID,
+   R.Blocked,
+   R.BATCH,
+   R.status,
+   R.command, 
+   R.wait_type,
+   R.WaitSeconds,
+   R.login_time,
+   R.last_batch,
+   R.open_tran,
+   R.hostname,
+   R.loginame,
+   R.program_name
+  FROM #T AS R
+  INNER JOIN BLOCKERS ON R.BLOCKED = BLOCKERS.SPID 
+  WHERE R.BLOCKED > 0 AND R.BLOCKED <> R.SPID
+ )
+ -- Create table of the blocked and blocking processes together in the order to display
+ SELECT 
+  BlockStatus,
+  BATCH as Statement,
+  SPID, 
+  BLOCKED, 
+  Status,
+  Command, 
+  Wait_type,
+  WaitSeconds,
+  login_time,
+  last_batch,
+  open_tran,
+  hostname,
+  loginame,
+  [program_name]
+  
+ FROM BLOCKERS ORDER BY BLOCKED  asc;
+
+ DROP TABLE #T;
