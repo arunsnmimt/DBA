@@ -1,0 +1,31 @@
+--Lists all database files and their sizes
+
+Create Table ##sizetemp
+(
+    DatabaseName sysname,
+    Name sysname,
+    physical_name nvarchar(500),
+  type_desc nvarchar(10),
+    Size decimal (18,2),
+    FreeSpace decimal (18,2)
+)   
+Exec sp_MSforeachdb '
+Use [?];
+Insert Into ##sizetemp (DatabaseName, Name, physical_name, type_desc, Size, FreeSpace)
+    Select DB_NAME() AS [DatabaseName], Name,  physical_name, type_desc,
+    Cast(Cast(Round(cast(size as decimal) * 8.0/1024.0,2) as decimal(18,2)) as nvarchar) Size,
+    Cast(Cast(Round(cast(size as decimal) * 8.0/1024.0,2) as decimal(18,2)) -
+        Cast(FILEPROPERTY(name, ''SpaceUsed'') * 8.0/1024.0 as decimal(18,2)) as nvarchar) As FreeSpace
+    From sys.database_files
+'
+Select * From ##sizetemp
+where type_desc = 'ROWS'
+order by FreeSpace DESC
+
+Select DatabaseName, Type_Desc, SUM(SIZE) TotalSize
+FROM ##sizetemp
+--where type_desc = 'ROWS'
+GROUP BY DatabaseName, Type_Desc
+order by DatabaseName ASC, type_desc Desc
+
+drop table ##sizetemp
